@@ -247,25 +247,31 @@ const Statistic = () => {
     console.log('Starting Excel export...');
     try {
       console.log('Preparing Excel data...');
+      // Fetch additional data from Firebase based on the chart type
+      const additionalData = await fetchAdditionalData(data);
+
       // Prepare data for Excel
       const excelData = [
-        ['Label', 'Value'], // Header row
-        ...Object.entries(data)
+        ['STT', 'Tên', 'Người dùng/Thiết bị', 'Thông tin 1', 'Thông tin 2'], // Header row
+        ...additionalData.map((item, index) => [
+          index + 1, // STT
+          item.name || 'N/A', // Tên
+          item.user || item.device || 'Không có thông tin', // Tên người dùng hoặc thiết bị
+          item.info1 || 'Không có thông tin', // Thông tin liên quan 1
+          item.info2 || 'Không có thông tin', // Thông tin liên quan 2
+        ])
       ];
       console.log('Excel data prepared:', excelData);
 
-      console.log('Creating worksheet...');
       // Create worksheet
       const ws = XLSX.utils.aoa_to_sheet(excelData);
       console.log('Worksheet created');
 
-      console.log('Creating workbook...');
       // Create workbook
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
       console.log('Workbook created');
 
-      console.log('Generating Excel file...');
       // Generate Excel file
       const wbout = XLSX.write(wb, { type: 'binary', bookType: "xlsx" });
       console.log('Excel file generated');
@@ -295,74 +301,123 @@ const Statistic = () => {
     }
   };
 
+  // Fetch additional data from Firebase based on the chart type
+  const fetchAdditionalData = async (data) => {
+    const additionalData = [];
+    try {
+      // Example: Fetch data based on the chart type
+      for (const [key, value] of Object.entries(data)) {
+        let query;
+        switch (value.type) {
+          case 'error':
+            query = firestore().collection('ERROR').where('deviceName', '==', key);
+            break;
+          case 'userByRoom':
+            query = firestore().collection('USERS').where('department', '==', key);
+            break;
+          case 'deviceByRoom':
+            query = firestore().collection('DEVICES').where('departmentName', '==', key);
+            break;
+          case 'deviceByUser':
+            query = firestore().collection('DEVICES').where('user', '==', key);
+            break;
+          default:
+            console.error("Unknown chart type");
+            continue;
+        }
+
+        const snapshot = await query.get();
+        snapshot.docs.forEach(doc => {
+          additionalData.push({
+            name: doc.data().name || 'N/A',
+            user: doc.data().user || 'N/A',
+            device: doc.data().device || 'N/A',
+            info1: doc.data().info1 || 'N/A', // Thông tin liên quan 1
+            info2: doc.data().info2 || 'N/A', // Thông tin liên quan 2
+          });
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching additional data: ", error);
+    }
+    return additionalData;
+  };
+
+  const COLUMN_SPACING = 10; // Khoảng cách cố định giữa các cột
+
   const renderChart = (data, title, chartType) => {
-    const barWidth = chartWidth / data.labels.length;
+    const totalWidth = Math.max(chartWidth, data.labels.length * 120);
+    const availableWidth = totalWidth - (COLUMN_SPACING * (data.labels.length - 1));
+    const barWidth = availableWidth / data.labels.length;
+    
 
     return (
-      <>
-        <View style={styles.legendContainer}>
-          <Text style={styles.titleText}>{title}</Text>
-          <IconButton
-            icon={({ size, color }) => (
-              <Icon name="microsoft-excel" size={size} color={color} />
-            )}
-            size={24}
-            onPress={() => handleExportToExcel(data, title)}
-            style={styles.exportButton}
-            color={BLUE_COLOR}
-          />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View>
-            <BarChart
-              data={data}
-              width={Math.max(chartWidth, data.labels.length * 120)}
-              height={chartHeight}
-              chartConfig={{
-                backgroundGradientFrom: '#fff',
-                backgroundGradientTo: '#fff',
-                color: (opacity = 1) => `rgba(0, 0, 205, ${opacity})`,
-                labelColor: (opacity = 1) => BLUE_COLOR,
-                propsForLabels: {
-                  fontSize: 8,
-                  width: 120,
-                  alignmentBaseline: 'middle',
-                  fill: BLUE_COLOR,
-                },
-              }}
-              verticalLabelRotation={0}
-              horizontalLabelRotation={-45} // Xoay nhãn để có nhiều không gian hơn
-              yAxisLabel=""
-              yAxisSuffix=""
-              style={{
-                marginVertical: 8,
-                borderRadius: 16,
-              }}
-              fromZero={true}
-              showValuesOnTopOfBars={true}
-            />
-            <View style={[styles.overlayContainer, { width: Math.max(chartWidth, data.labels.length * 120) }]}>
-              {data.labels.map((label, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.overlayLabel,
-                    {
-                      left: index * barWidth,
-                      width: barWidth,
-                      height: chartHeight,
-                    },
-                  ]}
-                  onPress={() => handleChartPress(chartType, label, data.datasets[0].data[index])}
-                >
-                  <View style={styles.touchableArea} />
-                </TouchableOpacity>
-              ))}
+        <>
+            <View style={styles.legendContainer}>
+                <Text style={styles.titleText}>{title}</Text>
+                <IconButton
+                    icon={({ size, color }) => (
+                        <Icon name="microsoft-excel" size={size} color={color} />
+                    )}
+                    size={24}
+                    onPress={() => handleExportToExcel(data, title)}
+                    style={styles.exportButton}
+                    color={BLUE_COLOR}
+                />
             </View>
-          </View>
-        </ScrollView>
-        <Divider />
-      </>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View>
+                    <BarChart
+                        data={data}
+                        width={totalWidth}
+                        height={chartHeight}
+                        chartConfig={{
+                            backgroundGradientFrom: '#fff',
+                            backgroundGradientTo: '#fff',
+                            color: (opacity = 1) => `rgba(0, 0, 205, ${opacity})`,
+                            labelColor: (opacity = 1) => BLUE_COLOR,
+                            propsForLabels: {
+                                fontSize: 8,
+                                width: 120,
+                                alignmentBaseline: 'middle',
+                                fill: BLUE_COLOR,
+                            },
+                            barPercentage: 1,
+                            categoryPercentage: 1,
+                        }}
+                        verticalLabelRotation={0}
+                        horizontalLabelRotation={-45}
+                        yAxisLabel=""
+                        yAxisSuffix=""
+                        style={{
+                            marginVertical: 8,
+                            borderRadius: 16,
+                        }}
+                        fromZero={true}
+                        showValuesOnTopOfBars={true}
+                    />
+                    <View style={[styles.overlayContainer, { width: totalWidth }]}>
+                        {data.labels.map((label, index) => (
+                            <TouchableOpacity
+                                key={index}
+                                style={[
+                                    styles.overlayLabel,
+                                    {
+                                        left: index * (barWidth + COLUMN_SPACING),
+                                        width: barWidth,
+                                        height: chartHeight,
+                                    },
+                                ]}
+                                onPress={() => handleChartPress(chartType, label, data.datasets[0].data[index])}
+                            >
+                                <View style={styles.touchableArea} />
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            </ScrollView>
+            <Divider />
+        </>
     );
   };
 
