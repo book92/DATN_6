@@ -11,12 +11,12 @@ const Device = ({ name, state, dayfix, onPress }) => (
     <TouchableOpacity onPress={onPress} style={styles.deviceInfo}>
       <Text style={styles.deviceName}>{name}</Text>
       <Text style={styles.deviceStatus}>
-        {state === "Fixed" ? `Đã sửa: ${dayfix}` : "Đã tiếp nhận"}
+        {state === "Đã sửa" ? `Đã sửa: ${dayfix}` : "Đã tiếp nhận"}
       </Text>
     </TouchableOpacity>
     <IconButton
-      icon={state === "Fixed" ? "check-circle" : "close-circle"}
-      color={state === "Fixed" ? "green" : "red"}
+      icon={state === "Đã sửa" ? "check-circle" : "close-circle"}
+      color={state === "Đã sửa" ? "green" : "red"}
       size={24}
     />
   </View>

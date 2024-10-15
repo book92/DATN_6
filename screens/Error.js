@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { StyleSheet, View, ScrollView, Alert } from "react-native";
 import { TextInput, Button, Text, HelperText } from "react-native-paper";
 import firestore from '@react-native-firebase/firestore';
@@ -13,6 +13,24 @@ const Error = ({ route, navigation }) => {
     const [error, setError] = useState('');
     const [controller] = useMyContextController();
     const { userLogin } = controller;
+    const [deviceRoom, setDeviceRoom] = useState('');
+
+    useEffect(() => {
+        // Fetch device room information
+        const fetchDeviceRoom = async () => {
+            try {
+                const deviceDoc = await firestore().collection('DEVICES').doc(device.id).get();
+                if (deviceDoc.exists) {
+                    setDeviceRoom(deviceDoc.data().departmentName || 'N/A');
+                }
+            } catch (error) {
+                console.error("Error fetching device room:", error);
+                setDeviceRoom('N/A');
+            }
+        };
+
+        fetchDeviceRoom();
+    }, [device.id]);
 
     const addErrorReport = async () => {
         if (!description.trim()) {
@@ -24,14 +42,18 @@ const Error = ({ route, navigation }) => {
         setLoading(true);
 
         try {
+            const today = new Date();
             await firestore().collection('ERROR').add({
-                deviceName: device.name,
-                deviceId: device.id,
-                fixday: "Đã tiếp nhận",
-                state: "Error",
-                description,
-                reportday: new Date().toISOString(),
-                userreport: userLogin.email, // Changed from userEmail to userreport
+                deviceName: device.name || 'Không có thông tin',
+                deviceType: device.type || 'Không có thông tin',
+                specifications: device.specs || {},
+                note: device.notes || 'Không có thông tin',
+                description: description,
+                reportday: today.toISOString().split('T')[0],
+                userreport: userLogin.email,
+                deviceRoom: deviceRoom,
+                state: "Chưa sửa",
+                fixday: ""
             });
             Alert.alert('Thông báo', 'Hệ thống đã ghi nhận và sẽ gửi phản hồi sớm nhất!');
             navigation.goBack();
@@ -65,6 +87,7 @@ const Error = ({ route, navigation }) => {
             <Text style={styles.title}>Báo Lỗi</Text>
             <View style={styles.formContainer}>
                 {renderInput("Tên thiết bị", device.name, null, false)}
+                {renderInput("Phòng", deviceRoom, null, false)}
                 {renderInput("Email", userLogin.email, null, false)}
                 {renderInput("Ngày báo", new Date().toLocaleString(), null, false)}
                 {renderInput("Mô tả", description, setDescription, true, true)}

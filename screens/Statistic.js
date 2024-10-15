@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Dimensions, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, Dimensions, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { BarChart } from 'react-native-chart-kit';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { Searchbar, Divider, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import Modal from 'react-native-modal';
@@ -10,7 +10,7 @@ import StaticList from './StaticList';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import * as XLSX from 'xlsx';
 import RNFS from 'react-native-fs';
-import { PermissionsAndroid } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyApBWUABXIusWxrlvdBt9ttvTd0uSISTQY',
@@ -25,6 +25,13 @@ const firestore = getFirestore(app);
 
 const BLUE_COLOR = '#0000CD';
 const BLACK_COLOR = '#000000';
+
+const formatSpecifications = (specs) => {
+  if (!specs || typeof specs !== 'object') return 'N/A';
+  return Object.entries(specs)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(' \n');
+};
 
 const Statistic = () => {
   const navigation = useNavigation();
@@ -228,13 +235,20 @@ const Statistic = () => {
   const requestStoragePermission = async () => {
     try {
       const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        {
+          title: "Quyền truy cập bộ nhớ",
+          message: "Ứng dụng cần quyền truy cập bộ nhớ để lưu file Excel.",
+          buttonNeutral: "Hỏi lại sau",
+          buttonNegative: "Từ chối",
+          buttonPositive: "Đồng ý"
+        }
       );
       if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-        console.log('Storage permission granted');
+        console.log("Quyền truy cập bộ nhớ được cấp");
         return true;
       } else {
-        console.log('Storage permission denied');
+        console.log("Quyền truy cập bộ nhớ bị từ chối");
         return false;
       }
     } catch (err) {
@@ -247,95 +261,263 @@ const Statistic = () => {
     console.log('Starting Excel export...');
     try {
       console.log('Preparing Excel data...');
-      // Fetch additional data from Firebase based on the chart type
-      const additionalData = await fetchAdditionalData(data);
+      const additionalData = await fetchAdditionalData(data, title);
 
-      // Prepare data for Excel
-      const excelData = [
-        ['STT', 'Tên', 'Người dùng/Thiết bị', 'Thông tin 1', 'Thông tin 2'], // Header row
-        ...additionalData.map((item, index) => [
-          index + 1, // STT
-          item.name || 'N/A', // Tên
-          item.user || item.device || 'Không có thông tin', // Tên người dùng hoặc thiết bị
-          item.info1 || 'Không có thông tin', // Thông tin liên quan 1
-          item.info2 || 'Không có thông tin', // Thông tin liên quan 2
-        ])
-      ];
+      let excelData;
+      switch (title) {
+        case "Thống kê lỗi theo thiết bị":
+          excelData = [
+            ['STT', 'Tên thiết bị', 'Phòng', 'Tên người dùng', 'Người báo lỗi', 'Ngày báo cáo', 'Ngày sửa', 'Tình trạng', 'Mô tả', 'Số lỗi'],
+            ...additionalData.map((item, index) => [
+              index + 1,
+              item.deviceName || 'N/A',
+              item.deviceRoom || 'N/A',
+              item.userName || 'N/A',
+              item.reportedBy || 'N/A',
+              item.reportDate || 'N/A',
+              item.fixDate || 'N/A',
+              item.status || 'N/A',
+              item.description || 'N/A',
+              item.errorCount || 0
+            ])
+          ];
+          break;
+
+        case "Thống kê người dùng theo phòng":
+          excelData = [
+            ['STT', 'Phòng', 'Số người dùng', 'Tên người dùng', 'Email', 'Vai trò']
+          ];
+          additionalData.forEach((dept, deptIndex) => {
+            if (dept.users.length === 0) {
+              excelData.push([deptIndex + 1, dept.department, dept.userCount, 'N/A', 'N/A', 'N/A']);
+            } else {
+              dept.users.forEach((user, userIndex) => {
+                excelData.push([
+                  deptIndex + 1,
+                  dept.department,
+                  dept.userCount,
+                  user.name,
+                  user.email,
+                  user.role
+                ]);
+              });
+            }
+          });
+          break;
+
+        case "Thống kê thiết bị theo phòng":
+          excelData = [
+            ['STT', 'Phòng', 'Số thiết bị', 'Tên thiết bị', 'Loại thiết bị', 'Người dùng', 'Email']
+          ];
+          additionalData.forEach((dept, deptIndex) => {
+            dept.devices.forEach((device) => {
+              excelData.push([
+                deptIndex + 1,
+                dept.department,
+                dept.deviceCount,
+                device.name,
+                device.type,
+                device.user,
+                device.email
+              ]);
+            });
+          });
+          break;
+
+        case "Thống kê thiết bị theo người dùng":
+          excelData = [
+            ['STT', 'Người dùng', 'Email', 'Số thiết bị', 'Tên thiết bị', 'Loại thiết bị', 'Phòng', 'Thông số kỹ thuật', 'Hình ảnh', 'Ghi chú']
+          ];
+          additionalData.forEach((userInfo, userIndex) => {
+            userInfo.devices.forEach((device) => {
+              excelData.push([
+                userIndex + 1,
+                userInfo.user,
+                device.email,
+                userInfo.deviceCount,
+                device.name,
+                device.type,
+                device.department,
+                device.specifications,
+                device.image,
+                device.note
+              ]);
+            });
+          });
+          break;
+      }
+
       console.log('Excel data prepared:', excelData);
 
-      // Create worksheet
+      // Tạo workbook và worksheet
       const ws = XLSX.utils.aoa_to_sheet(excelData);
-      console.log('Worksheet created');
-
-      // Create workbook
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-      console.log('Workbook created');
 
-      // Generate Excel file
-      const wbout = XLSX.write(wb, { type: 'binary', bookType: "xlsx" });
-      console.log('Excel file generated');
+      // Định dạng cột
+      const columnWidths = [
+        { wch: 5 },  // STT
+        { wch: 20 }, 
+        { wch: 30 }, // Email
+        { wch: 20 }, // Số thiết bị
+        { wch: 30 }, 
+        { wch: 15 }, // Loại thiết bị
+        { wch: 20 }, // Phòng
+        { wch: 50 }, // Thông số kỹ thuật
+        { wch: 30 }, // Hình ảnh
+        { wch: 30 }  // Ghi chú
+      ];
+      ws['!cols'] = columnWidths;
 
-      // Define file name
-      const fileName = `${title.replace(/\s+/g, '_')}_${new Date().getTime()}.xlsx`;
-      console.log('File name:', fileName);
-
-      if (Platform.OS === 'android') {
-        console.log('Saving file on Android...');
-        const filePath = `${RNFS.DownloadDirectoryPath}/${fileName}`;
-        console.log('File path:', filePath);
-
-        // Write file
-        await RNFS.writeFile(filePath, wbout, 'ascii');
-        console.log('File written successfully');
-
-        // Notify user
-        Alert.alert('Thành công', `File đã được lưu vào thư mục Downloads với tên ${fileName}`);
-      } else {
-        console.log('Device is not Android, skipping file save');
-        Alert.alert('Thông báo', 'Tính năng này chỉ khả dụng trên Android');
+      // Định dạng hàng tiêu đề
+      const headerRange = XLSX.utils.decode_range(ws['!ref']);
+      for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+        const address = XLSX.utils.encode_cell({ r: 0, c: C });
+        ws[address].s = {
+          font: { bold: true },
+          alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+          fill: { fgColor: { rgb: "FFFFAA00" } }
+        };
       }
+
+      // Định dạng các ô dữ liệu
+      for (let R = 1; R <= headerRange.e.r; ++R) {
+        for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+          const address = XLSX.utils.encode_cell({ r: R, c: C });
+          if (!ws[address]) continue;
+          ws[address].s = {
+            alignment: { vertical: 'center', horizontal: 'left', wrapText: true }
+          };
+        }
+      }
+
+      // Tạo file Excel
+      const wbout = XLSX.write(wb, { type: 'binary', bookType: "xlsx" });
+
+      // Lưu file
+      const fileName = `${title.replace(/\s+/g, '_')}_${new Date().getTime()}.xlsx`;
+      const filePath = `${RNFS.DownloadDirectoryPath}/${fileName}`;
+      await RNFS.writeFile(filePath, wbout, 'ascii');
+
+      console.log('File saved successfully');
+      Alert.alert('Thành công', `File đã được lưu vào thư mục Downloads với tên ${fileName}`);
+
     } catch (error) {
       console.error('Error in Excel export:', error);
-      Alert.alert('Lỗi', 'Có lỗi xảy ra khi xuất file Excel.');
+      Alert.alert('Lỗi', `Có lỗi xảy ra khi xuất file Excel: ${error.message}`);
     }
   };
 
-  // Fetch additional data from Firebase based on the chart type
-  const fetchAdditionalData = async (data) => {
+  const fetchAdditionalData = async (data, title) => {
     const additionalData = [];
     try {
-      // Example: Fetch data based on the chart type
-      for (const [key, value] of Object.entries(data)) {
-        let query;
-        switch (value.type) {
-          case 'error':
-            query = firestore().collection('ERROR').where('deviceName', '==', key);
-            break;
-          case 'userByRoom':
-            query = firestore().collection('USERS').where('department', '==', key);
-            break;
-          case 'deviceByRoom':
-            query = firestore().collection('DEVICES').where('departmentName', '==', key);
-            break;
-          case 'deviceByUser':
-            query = firestore().collection('DEVICES').where('user', '==', key);
-            break;
-          default:
-            console.error("Unknown chart type");
-            continue;
-        }
+      switch (title) {
+        case "Thống kê lỗi theo thiết bị":
+          const errorsSnapshot = await getDocs(collection(firestore, 'ERROR'));
+          const errors = errorsSnapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
 
-        const snapshot = await query.get();
-        snapshot.docs.forEach(doc => {
-          additionalData.push({
-            name: doc.data().name || 'N/A',
-            user: doc.data().user || 'N/A',
-            device: doc.data().device || 'N/A',
-            info1: doc.data().info1 || 'N/A', // Thông tin liên quan 1
-            info2: doc.data().info2 || 'N/A', // Thông tin liên quan 2
-          });
-        });
+          for (const error of errors) {
+            const deviceQuery = query(
+              collection(firestore, 'DEVICES'),
+              where('name', '==', error.deviceName)
+            );
+            const deviceSnapshot = await getDocs(deviceQuery);
+            let deviceInfo = null;
+            if (!deviceSnapshot.empty) {
+              deviceInfo = deviceSnapshot.docs[0].data();
+            }
+
+            // Lấy thông tin người dùng
+            let userInfo = null;
+            if (deviceInfo && deviceInfo.user) {
+              const userQuery = query(
+                collection(firestore, 'USERS'),
+                where('email', '==', deviceInfo.user)
+              );
+              const userSnapshot = await getDocs(userQuery);
+              if (!userSnapshot.empty) {
+                userInfo = userSnapshot.docs[0].data();
+              }
+            }
+
+            // Chuyển đổi ngày từ chuỗi sang định dạng ngày
+            const parseDate = (dateString) => {
+              const date = new Date(dateString);
+              return isNaN(date) ? 'N/A' : date.toLocaleDateString();
+            };
+
+            additionalData.push({
+              deviceName: error.deviceName,
+              deviceRoom: deviceInfo?.departmentName || 'N/A',
+              userName: userInfo?.name || deviceInfo?.user || 'N/A',
+              reportedBy: error.userreport || 'N/A',
+              reportDate: parseDate(error.reportday),
+              fixDate: parseDate(error.fixday),
+              status: error.state || 'N/A',
+              description: error.description || 'N/A',
+              errorCount: data.datasets[0].data[data.labels.indexOf(error.deviceName)] || 1
+            });
+          }
+          break;
+
+        case "Thống kê người dùng theo phòng":
+          const usersSnapshot = await getDocs(collection(firestore, 'USERS'));
+          const users = usersSnapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
+          
+          for (const [department, count] of Object.entries(data)) {
+            const departmentUsers = users.filter(user => user.department === department);
+            additionalData.push({
+              department,
+              userCount: count,
+              users: departmentUsers.map(user => ({
+                name: user.fullname || 'N/A',
+                email: user.email || 'N/A',
+                role: user.role || 'N/A'
+              }))
+            });
+          }
+          break;
+
+        case "Thống kê thiết bị theo phòng":
+          const devicesSnapshot = await getDocs(collection(firestore, 'DEVICES'));
+          const devices = devicesSnapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
+          
+          for (const [department, count] of Object.entries(data)) {
+            const departmentDevices = devices.filter(device => device.departmentName === department);
+            additionalData.push({
+              department,
+              deviceCount: count,
+              devices: departmentDevices.map(device => ({
+                name: device.name || 'N/A',
+                type: device.type || 'N/A',
+                user: device.user || 'N/A',
+                email: device.userEmail || 'N/A'
+              }))
+            });
+          }
+          break;
+
+        case "Thống kê thiết bị theo người dùng":
+          const devicesUserSnapshot = await getDocs(collection(firestore, 'DEVICES'));
+          const devicesUser = devicesUserSnapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
+          
+          for (const [user, count] of Object.entries(data)) {
+            const userDevices = devicesUser.filter(device => device.user === user);
+            additionalData.push({
+              user,
+              deviceCount: count,
+              devices: userDevices.map(device => ({
+                name: device.name || 'N/A',
+                email: device.userEmail || 'N/A',
+                type: device.type || 'N/A',
+                department: device.departmentName || 'N/A',
+                specifications: formatSpecifications(device.specifications), // Sử dụng hàm formatSpecifications ở đây
+                image: device.image || 'N/A',
+                note: device.note || 'N/A'
+              }))
+            });
+          }
+          break;
       }
     } catch (error) {
       console.error("Error fetching additional data: ", error);
@@ -360,7 +542,13 @@ const Statistic = () => {
                         <Icon name="microsoft-excel" size={size} color={color} />
                     )}
                     size={24}
-                    onPress={() => handleExportToExcel(data, title)}
+                    onPress={() => handleExportToExcel(
+                      chartType === "userByRoom" ? filteredData.roomCountsUser :
+                      chartType === "deviceByRoom" ? filteredData.roomCountsDevice :
+                      chartType === "deviceByUser" ? filteredData.userCount :
+                      data,
+                      title
+                    )}
                     style={styles.exportButton}
                     color={BLUE_COLOR}
                 />
@@ -562,7 +750,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingRight: 40,
     marginLeft: 10,
-    marginBottom: 50, // Tăng margin bottom để tạo không gian cho nhãn xoay
+    marginBottom: 50, 
   },
   touchableBarContainer: {
     flexDirection: 'row',
@@ -570,12 +758,12 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    bottom: 50, // Điều chỉnh bottom để phù hợp với margin bottom của chart
+    bottom: 50, 
     paddingLeft: 30,
   },
   touchableBar: {
     height: '100%',
-    width: 60, // Đảm bảo độ rộng này khớp với barWidth trong renderChart
+    width: 60, 
   },
   exportButton: {
     margin: 0,

@@ -12,7 +12,7 @@ const ErrorDeviceDetail = ({ route, navigation }) => {
     const handleUpdate = async () => {
         try {    
             await firestore().collection("ERROR").doc(item.id).update({
-                state: "Fixed",
+                state: "Đã sửa",
                 fixday: new Date().toString(),
             });
             Alert.alert("Cập nhật thành công!");

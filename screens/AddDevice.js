@@ -140,10 +140,23 @@ const AddDevice = ({ route = { params: {} }, navigation }) => {
     if (deviceName && deviceUser && deviceType && deviceNotes) {
       setLoading(true);
       try {
+        // Check if a device with the same name already exists in the department
+        const existingDeviceSnapshot = await firestore()
+          .collection('DEVICES')
+          .where('name', '==', deviceName)
+          .where('departmentName', '==', departmentName)
+          .get();
+
+        if (!existingDeviceSnapshot.empty) {
+          Alert.alert('Lỗi', 'Tên thiết bị đã tồn tại trong phòng này. Vui lòng nhập tên khác.');
+          setLoading(false);
+          return;
+        }
+
         const deviceData = {
           name: deviceName,
           userEmail: deviceUser,
-          user: deviceUserName, // Thêm tên người dùng vào dữ liệu
+          user: deviceUserName,
           type: deviceType,
           specs: deviceSpecs,
           notes: deviceNotes,
