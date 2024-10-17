@@ -1,11 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, Alert, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, Alert, ActivityIndicator, TouchableOpacity, Platform, Linking } from 'react-native';
 import firestore from '@react-native-firebase/firestore';
 import { Button, IconButton } from 'react-native-paper';
 import { Dropdown } from 'react-native-paper-dropdown';
 import { captureRef } from 'react-native-view-shot';
 import storage from '@react-native-firebase/storage';
 import QRCode from 'react-native-qrcode-svg';
+import RNFS from 'react-native-fs';
+import { PermissionsAndroid } from 'react-native';
+import RNHTMLtoPDF from 'react-native-html-to-pdf';
+import Share from 'react-native-share';
+import XLSX from 'xlsx';
 
 const DeviceDetail = ({ route, navigation }) => {
   const { deviceId } = route.params;
@@ -207,13 +212,86 @@ const DeviceDetail = ({ route, navigation }) => {
     });
   };
 
+  const requestStoragePermission = async () => {
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        {
+          title: "Quyền truy cập bộ nhớ",
+          message: "Ứng dụng cần quyền truy cập bộ nhớ để lưu file Excel.",
+          buttonNeutral: "Hỏi lại sau",
+          buttonNegative: "Từ chối",
+          buttonPositive: "Đồng ý"
+        }
+      );
+      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        console.log("Quyền truy cập bộ nhớ được cấp");
+        return true;
+      } else {
+        console.log("Quyền truy cập bộ nhớ bị từ chối");
+        return false;
+      }
+    } catch (err) {
+      console.warn(err);
+      return false;
+    }
+  };
+
+  const exportQRToPDF = async () => {
+    try {
+      console.log('Starting PDF export...');
+
+      const base64Image = await captureRef(qrRef, {
+        format: 'png',
+        quality: 0.8,
+      });
+
+      const htmlContent = `
+        <h1>${device.name}</h1>
+        <img src="${base64Image}" alt="QR Code" />
+      `;
+
+      const fileName = `${device.name.replace(/\s+/g, '_')}_${departmentName.replace(/\s+/g, '_')}`;
+
+      const options = {
+        html: htmlContent,
+        fileName: fileName,
+        directory: RNFS.DownloadDirectoryPath,
+      };
+
+      const file = await RNHTMLtoPDF.convert(options);
+      const filePath = `${RNFS.DownloadDirectoryPath}/${fileName}.pdf`;
+
+      await RNFS.moveFile(file.filePath, filePath);
+
+      console.log('File saved successfully:', filePath);
+      Alert.alert('Thành công', `File đã được lưu vào: ${filePath}`);
+
+    } catch (error) {
+      console.error('Error in PDF export:', error);
+      Alert.alert('Lỗi', `Không thể xuất file PDF: ${error.message}`);
+    }
+  };
+
+  const confirmExport = () => {
+    Alert.alert(
+      'Xuất PDF',
+      'Bạn muốn xuất mã QR thành file PDF?',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        { text: 'Xác nhận', onPress: exportQRToPDF },
+      ],
+      { cancelable: true }
+    );
+  };
+
   if (!device) {
     return <Text>Đang tải...</Text>;
   }
 
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.title}>{isEditing ? 'Cập nhật thiết bị' : 'Chi tiết thiết bị'}</Text>
+      <Text style={styles.title}>{isEditing ? 'Cập nhật thiết b' : 'Chi tiết thiết bị'}</Text>
       <Text style={styles.label}>Tên thiết bị:</Text>
       {isEditing ? (
         <TextInput
@@ -347,8 +425,13 @@ const DeviceDetail = ({ route, navigation }) => {
         <Text style={[styles.value, { color: '#0000FF' }]}>{device.note}</Text>
       )}
       <Text style={styles.label}>QR:</Text>
-      <View ref={qrRef} collapsable={false} style={styles.qrContainer}>
-        <QRCode value={qrValue || ' '} size={200} />
+      <View style={styles.qrSection}>
+        <View ref={qrRef} collapsable={false} style={styles.qrContainer}>
+          <QRCode value={qrValue || ' '} size={200} />
+        </View>
+        <TouchableOpacity style={styles.exportButton} onPress={confirmExport}>
+          <Text style={styles.exportButtonText}>Xuất PDF</Text>
+        </TouchableOpacity>
       </View>
       <View style={styles.buttonContainer}>
         {isEditing ? (
@@ -485,9 +568,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  qrContainer: {
+  qrSection: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginVertical: 10,
+  },
+  qrContainer: {
+    // Remove alignItems: 'center' from here
+  },
+  exportButton: {
+    backgroundColor: '#0000CD',
+    padding: 10,
+    borderRadius: 5,
+    marginLeft: 10,
+  },
+  exportButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   specInputContainer: {
     flexDirection: 'row',
